@@ -1,3 +1,6 @@
+// ConsoleApplication2.cpp : This file contains the 'main' function. Program execution begins and ends there.
+//
+
 #include <iostream>
 #include <Windows.h>
 #include <setupapi.h>
@@ -7,39 +10,42 @@
 int InstallAndStartDriver() {
 
 	UINT ErrorLine;
-	PCWSTR InfFileName = L"winperfstat.inf";
+	PCWSTR InfFileName = L"C:\\Users\\lewis\\source\\repos\\ConsoleApplication2\\x64\\Release\\winperfstat.inf";
 	PCWSTR DriverName = L"winperfstat";
-	HINF HInf = SetupOpenInfFile(InfFileName, NULL, INF_STYLE_WIN4, &ErrorLine);
 	PCWSTR SourceFile = L"winperfstat.sys";
+	PCWSTR SourcePathRoot = L"C:\\Users\\lewis\\source\\repos\\ConsoleApplication2\\x64\\Release\\";
 	PCWSTR DriverInstallPath = L"C:\\Windows\\system32\\drivers\\winperfstat.sys";
-	LPCSTR SubKey = "\\System\\CurrentControlSet\\Services\\winperfstat";
+	LPCSTR SubKey = "System\\CurrentControlSet\\Services\\winperfstat";
 	HKEY hKey;
-	BYTE ErrorControl = 0x1;
+	DWORD ErrorControl = 1;
+	PBOOL FileWasInUse = NULL;
 
-	if (RegCreateKeyExA(HKEY_LOCAL_MACHINE,
+	if (LSTATUS status = RegCreateKeyExA(HKEY_LOCAL_MACHINE,
 		SubKey,
 		NULL, NULL,
 		REG_OPTION_NON_VOLATILE,
 		KEY_WRITE,
 		NULL,
 		&hKey,
-		NULL)) {
-
-		if (RegSetValueEx(hKey, L"DriverName", NULL, REG_SZ, (LPBYTE)DriverName, sizeof(wchar_t)*(wcslen(DriverName) + 1))
-		&& RegSetValueEx(hKey, L"DisplayName", NULL, REG_DWORD, (LPBYTE)DriverName, sizeof(wchar_t)*(wcslen(DriverName) + 1))
-		&& RegSetValueEx(hKey, L"ErrorControl", NULL, REG_SZ, (LPBYTE)&ErrorControl, sizeof(DWORD))
-		) {
-			return false;
-		}
+		NULL)) 
+	{
+		return status;
 	}
 	else {
-		return false;
+		if (RegSetValueEx(hKey, L"DriverName", NULL, REG_SZ, (LPBYTE)DriverName, sizeof(wchar_t)*(wcslen(DriverName) + 1))
+			|| RegSetValueEx(hKey, L"DisplayName", NULL, REG_SZ, (LPBYTE)DriverName, sizeof(wchar_t)*(wcslen(DriverName) + 1))
+			|| RegSetValueEx(hKey, L"ErrorControl", NULL, REG_DWORD, (LPBYTE)&ErrorControl, sizeof(DWORD))
+			)
+		{
+			return 2;
+		}
 	}
 
 	if (SC_HANDLE manager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS)) {
 
-		if (SetupInstallFileEx(HInf, NULL, SourceFile, NULL, DriverInstallPath,
-			SP_COPY_NEWER_OR_SAME, NULL, NULL, FALSE)) {
+		HINF HInf = SetupOpenInfFile(InfFileName, NULL, INF_STYLE_WIN4|INF_STYLE_OLDNT, &ErrorLine);
+		if (SetupInstallFileW(HInf, NULL, SourceFile, SourcePathRoot, DriverInstallPath,
+			SP_COPY_NEWER_OR_SAME, NULL, FileWasInUse)) {
 
 			if (SC_HANDLE service = CreateService(manager,
 				DriverName,
@@ -53,22 +59,22 @@ int InstallAndStartDriver() {
 				) {
 				
 				if (!StartService(service, NULL, NULL)) {
-					return false;
+					return 3;
 				}
 			}
 			else {
-				return false;
+				return 4;
 			}
 		}
 		else {
-			return false;
+			return GetLastError();
 		}
 	}
 	else {
-		return false;
+		return 6;
 	}
 
-	return true;
+	return 0;
 }
 
 int main(int argc, char** argv)
@@ -81,8 +87,8 @@ int main(int argc, char** argv)
 	PIMAGE_NT_HEADERS64 PEHeader;
 	char bufferOut[1000] = { 0 };
 
-	if (!InstallAndStartDriver()) {  //if driver not installed, install; if driver not started, start
-		std::cout << "error";        //if error during install start / install check
+	if (int i = InstallAndStartDriver()) {  //if driver not installed, install; if driver not started, start
+		std::cout << "error" << i;        //if error during install start / install check
 		return false;     
 	}; 
 
@@ -96,6 +102,8 @@ int main(int argc, char** argv)
 		FILE_READ_ACCESS|FILE_WRITE_ACCESS,
 		FILE_SHARE_READ|FILE_SHARE_WRITE,
 		NULL, OPEN_EXISTING, 0 , NULL);
+	
+	std::cout << "done";
 
 	DeviceIoControl(hDevice,
 		BENCHMARK_DRV_IOCTL,
@@ -113,3 +121,4 @@ int main(int argc, char** argv)
 
 	return 0;
 }
+
