@@ -1,5 +1,14 @@
-#include "driver.h"
+#include <ntddk.h>
+#include <initguid.h>
+
 //#include "wdm.h"
+
+NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING RegistryPath);
+NTSTATUS NotImplementedDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
+NTSTATUS IoCtlDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
+VOID UnloadHandler(IN PDRIVER_OBJECT DriverObject);
+NTSTATUS CreateCloseDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
+VOID MeasureApp(IN char** inputBuffer);
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (INIT, DriverEntry)
@@ -13,13 +22,6 @@
 #define BENCHMARK_DRV_IOCTL 0x69
 #define IA32_PERF_EVTSEL(x) 0x186+x
 #define BuildEvent(EVT, UMASK, USR, OS, E, PC, INTT, ANY, EN, INV, CMASK) (EVT + (UMASK << 8) + (USR << 16) + (OS << 17) + (E << 18) + (PC << 19) + (INTT << 20) + (ANY << 21) + (EN << 22) + (INV << 23) + (CMASK << 24))
-
-NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING RegistryPath);
-NTSTATUS NotImplementedDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
-NTSTATUS IoCtlDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
-VOID UnloadHandler(IN PDRIVER_OBJECT DriverObject);
-NTSTATUS CreateCloseDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
-VOID MeasureApp(IN char** inputBuffer);
 
 LPCSTR Events[26] = {
 	"LD_BLOCKS.STORE_FORWARD", //strings automatically get nul character
@@ -83,6 +85,7 @@ NTSTATUS DriverEntry(
 	IN PUNICODE_STRING RegistryPath
 )
 {
+	UNREFERENCED_PARAMETER(RegistryPath);
 	PDEVICE_OBJECT DeviceObject = NULL;
 	NTSTATUS Status = STATUS_UNSUCCESSFUL;
 	UNICODE_STRING DeviceName, DosDeviceName = { 0 };
@@ -93,7 +96,7 @@ NTSTATUS DriverEntry(
 		0,
 		&DeviceName,
 		FILE_DEVICE_UNKNOWN,
-		NULL,
+		0,
 		FALSE,
 		&DeviceObject);
 
@@ -106,10 +109,10 @@ NTSTATUS DriverEntry(
 	}
 
 	for (int i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++) {
-#pragma warning(push) // Disable the Compiler Warning: 28169
-#pragma warning(disable : 28169) 
+		#pragma warning(push) // Disable the Compiler Warning: 28169
+		#pragma warning(disable : 28169) 
 		DriverObject->MajorFunction[i] = NotImplementedDispatch;
-#pragma warning(pop)
+		#pragma warning(pop)
 	}
 
 	DriverObject->MajorFunction[IRP_MJ_CREATE] = CreateCloseDispatch;
@@ -194,7 +197,7 @@ NTSTATUS IoCtlDispatch(
 
 	IrpSp = IoGetCurrentIrpStackLocation(Irp);
 	inputBuffer = IrpSp->Parameters.DeviceIoControl.Type3InputBuffer;
-	*((char**)IrpSp->Parameters.DeviceIoControl.Type3InputBuffer + 1) = Irp;
+	*((PIRP*)IrpSp->Parameters.DeviceIoControl.Type3InputBuffer + 1) = Irp;
 
 
 	if (IrpSp) {
@@ -218,7 +221,7 @@ NTSTATUS IoCtlDispatch(
 				NULL,
 				KernelMode,
 				(PVOID*)&ThreadObject,
-				NULL)) 
+				NULL))
 			{
 				Status = STATUS_BAD_DATA;
 				break;
@@ -261,8 +264,8 @@ void MeasureApp(
 	IN char** inputBuffer
 )
 {
-	void(*EntryPoint)() = inputBuffer[0];
-	PIRP Irp = inputBuffer[1];
+	void(*EntryPoint)() = (void(*)())inputBuffer[0];
+	PIRP Irp = (PIRP)(inputBuffer[1]);
 	PIO_STACK_LOCATION IrpSp;
 	int inputBufferlen;
 	KIRQL oldIrql;
@@ -274,7 +277,7 @@ void MeasureApp(
 	PULONGLONG CountBuffer = ExAllocatePool(NonPagedPool, inputBufferlen);
 
 	oldIrql = KeRaiseIrqlToSynchLevel();
-	
+
 	for (int j = 2; j < numParams; j++) {
 		for (int i = 0; i < sizeof(Events) / sizeof(ULONGLONG); i++) {
 			if (strcmp(Events[i], inputBuffer[j]))
@@ -299,10 +302,10 @@ void MeasureApp(
 			CountBuffer[i] = __readpmc(0) - CountBuffer[i];
 		}
 	}
-	
+
 	KeLowerIrql(oldIrql);
 
-	RtlcopyMemory(Irp->UserBuffer, CountBuffer, inputBufferlen);
+	RtlCopyMemory(Irp->UserBuffer, CountBuffer, inputBufferlen);
 	ExFreePool(MSRBuffer);
 	ExFreePool(CountBuffer);
 
