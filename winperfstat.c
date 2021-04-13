@@ -13,8 +13,6 @@ int InstallAndStartDriver() {
 	HINF HInf = SetupOpenInfFile(InfFileName, NULL, INF_STYLE_WIN4, &ErrorLine);
 	PCWSTR SourceFile = L"winperfstat.sys";
 	PCWSTR DriverInstallPath = L"C:\\Windows\\system32\\drivers\\winperfstat.sys";
-	PBOOL FileWasInUse = FALSE;
-	PVOID Context = NULL;
 	LPCSTR SubKey = "\\System\\CurrentControlSet\\Services\\winperfstat";
 	HKEY hKey;
 	BYTE ErrorControl = 0x1;
@@ -42,7 +40,7 @@ int InstallAndStartDriver() {
 	if (SC_HANDLE manager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS)) {
 
 		if (SetupInstallFileEx(HInf, NULL, SourceFile, NULL, DriverInstallPath,
-			SP_COPY_NEWER_OR_SAME, NULL, Context, FileWasInUse)) {
+			SP_COPY_NEWER_OR_SAME, NULL, NULL, FALSE)) {
 
 			if (SC_HANDLE service = CreateService(manager,
 				DriverName,
@@ -79,7 +77,9 @@ int main(int argc, char** argv)
 	HANDLE hDevice;
 	PCWSTR SymLink = L"\\\\.\\winperfstat\\";
 	DWORD bytesReturned;
+	LPCSTR AppName = argv[1];
 	HMODULE hApp;
+	PIMAGE_NT_HEADERS64 PEHeader;
 	char bufferOut[1000] = { 0 };
 
 	if (!InstallAndStartDriver()) {  //if driver not installed, install; if driver not started, start
@@ -87,12 +87,15 @@ int main(int argc, char** argv)
 		return false;     
 	}; 
 
-	hApp = LoadLibraryA(argv[0]);
-	argv[0] = (char*)(((PIMAGE_NT_HEADERS64)((PBYTE)hApp + (int)((PBYTE)hApp + 0x3c)))->OptionalHeader.AddressOfEntryPoint);
+	hApp = LoadLibraryA(AppName); 
+	PEHeader = ((PIMAGE_NT_HEADERS64)((PBYTE)hApp + (int)((PBYTE)hApp + 0x3c)));
+	VirtualLock(hApp, PEHeader->OptionalHeader.SizeOfImage);
+	argv[0] = (char*)hApp + (int)PEHeader->OptionalHeader.BaseOfCode;
+	((void(*)())(argv[0]))(); //calls the benchmark function, making sure it returns
 
 	hDevice = CreateFileW(SymLink,
 		FILE_READ_ACCESS|FILE_WRITE_ACCESS,
-		FILE_SHARE_READ|FILE_SHARE_WRITE, 
+		FILE_SHARE_READ|FILE_SHARE_WRITE,
 		NULL, OPEN_EXISTING, 0 , NULL);
 
 	DeviceIoControl(hDevice,
@@ -103,6 +106,11 @@ int main(int argc, char** argv)
 		sizeof(bufferOut),
 		&bytesReturned, NULL);
 
+	VirtualUnlock(hApp, PEHeader->OptionalHeader.SizeOfImage);
+	FreeLibrary(hApp);
+	for (int i = 2; i < argc; i++) {
+		std::cout << argv[i] << ":   " << ((unsigned long long*)bufferOut)[i] << "\n";
+	}
+
 	return 0;
 }
-
