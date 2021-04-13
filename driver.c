@@ -109,10 +109,10 @@ NTSTATUS DriverEntry(
 	}
 
 	for (int i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++) {
-		#pragma warning(push) // Disable the Compiler Warning: 28169
-		#pragma warning(disable : 28169) 
+#pragma warning(push) // Disable the Compiler Warning: 28169
+#pragma warning(disable : 28169) 
 		DriverObject->MajorFunction[i] = NotImplementedDispatch;
-		#pragma warning(pop)
+#pragma warning(pop)
 	}
 
 	DriverObject->MajorFunction[IRP_MJ_CREATE] = CreateCloseDispatch;
@@ -264,6 +264,7 @@ void MeasureApp(
 	IN char** inputBuffer
 )
 {
+	PVOID hSection = MmLockPagableCodeSection(MeasureApp);
 	void(*EntryPoint)() = (void(*)())(inputBuffer[0]);
 	PIRP Irp = (PIRP)(inputBuffer[1]);
 	PIO_STACK_LOCATION IrpSp;
@@ -305,6 +306,7 @@ void MeasureApp(
 
 	KeLowerIrql(oldIrql);
 
+	MmUnlockPagableImageSection(hSection);
 	RtlCopyMemory(Irp->UserBuffer, CountBuffer, inputBufferlen);
 	ExFreePool(MSRBuffer);
 	ExFreePool(CountBuffer);
