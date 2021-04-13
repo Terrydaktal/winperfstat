@@ -7,6 +7,7 @@
 #pragma alloc_text (PAGE, IoCtlDispatch)
 #pragma alloc_text (PAGE, UnloadHandler)
 #pragma alloc_text (PAGE, CreateCloseDispatch)
+#pragma alloc_text (PAGELK, MeasureApp)
 #endif
 
 #define BENCHMARK_DRV_IOCTL 0x69
@@ -175,7 +176,7 @@ NTSTATUS CreateCloseDispatch(
 }
 
 NTSTATUS IoCtlDispatch(
-	IN PDEVICE_OBJECT DeviceObject, 
+	IN PDEVICE_OBJECT DeviceObject,
 	IN PIRP Irp
 )
 {
@@ -185,7 +186,7 @@ NTSTATUS IoCtlDispatch(
 	char** inputBuffer;
 
 	HANDLE hThread;
-	
+	PETHREAD ThreadObject;
 	UNREFERENCED_PARAMETER(DeviceObject);
 	PAGED_CODE();
 
@@ -201,12 +202,34 @@ NTSTATUS IoCtlDispatch(
 		case BENCHMARK_DRV_IOCTL:
 			PsCreateSystemThread(&hThread,
 				THREAD_ALL_ACCESS,
-				NULL, 
-				hProcess, 
+				NULL,
+				hProcess,
 				NULL,
 				MeasureApp,
 				inputBuffer
 			);
+
+			ObReferenceObjectByHandle(
+				hThread,
+				THREAD_ALL_ACCESS,
+				NULL,
+				KernelMode,
+				(PVOID*)&ThreadObject,
+				NULL
+			);
+
+			if (ThreadObject)
+			{
+				KeWaitForSingleObject(
+					ThreadObject,
+					Executive,
+					KernelMode,
+					FALSE,
+					0);
+
+				ObDereferenceObject(ThreadObject);
+			}
+			Status = STATUS_SUCCESS;
 			break;
 
 		default:
@@ -233,12 +256,47 @@ void MeasureApp(
 	unsigned long long int after = 0;
 	void(*EntryPoint)() = inputBuffer[0];
 	PIRP Irp = inputBuffer[1];
-	PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
+	PIO_STACK_LOCATION IrpSp;
+	int inputBufferlen;
+	KIRQL oldIrql;
+	int numParams;
+	IrpSp = IoGetCurrentIrpStackLocation(Irp);
+	inputBufferlen = IrpSp->Parameters.DeviceIoControl.InputBufferLength;
+	numParams = inputBufferlen / sizeof(PVOID);
+	PULONGLONG MSRBuffer = ExAllocatePool(NonPagedPool, inputBufferlen);
+	PULONGLONG CountBuffer = ExAllocatePool(NonPagedPool, inputBufferlen);
+
+	oldIrql = KeRaiseIrqlToSynchLevel();
+
 	
-	int inputBufferlen = IrpSp->Parameters.DeviceIoControl.InputBufferLength;
-	
-	__writemsr(IA32_PERF_EVTSEL(0), inputBuffer[2]);
-	before = __readpmc(0);
+	for (int j = 2; j < numParams; j++) {
+		for (int i = 0; i < sizeof(Events) / sizeof(ULONGLONG); i++) {
+			if (strcmp(Events[i], inputBuffer[j]))
+			{
+				MSRBuffer[j] = EventMSRValues[i];
+			}
+		}
+	}
+
+	for (int i = 2; i < numParams; i++) {
+		if (MSRBuffer[i]) {
+			__writemsr(IA32_PERF_EVTSEL(0), MSRBuffer[i]);
+			CountBuffer[i] = __readpmc(0);
+		}
+	}
+
 	EntryPoint();
-	after = __readpmc(0);
+
+	for (int i = 2; i < numParams; i++) {
+		if (MSRBuffer[i]) {
+			__writemsr(IA32_PERF_EVTSEL(0), MSRBuffer[i]);
+			CountBuffer[i] = __readpmc(0) - CountBuffer[i];
+		}
+	}
+	
+	KeLowerIrql(oldIrql);
+
+	Irp->UserBuffer = CountBuffer;
+
+	return;
 }
