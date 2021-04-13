@@ -1,9 +1,8 @@
-// ConsoleApplication2.cpp : This file contains the 'main' function. Program execution begins and ends there.
-//
-
 #include <iostream>
 #include <Windows.h>
 #include <setupapi.h>
+
+#define BENCHMARK_DRV_IOCTL 0x69
 
 int InstallAndStartDriver() {
 
@@ -88,7 +87,7 @@ int main(int argc, char** argv)
 	}; 
 
 	hApp = LoadLibraryA(AppName); 
-	PEHeader = ((PIMAGE_NT_HEADERS64)((PBYTE)hApp + (int)((PBYTE)hApp + 0x3c)));
+	PEHeader = ((PIMAGE_NT_HEADERS64)((PBYTE)hApp + (int)(*((PBYTE)hApp + 0x3c))));
 	VirtualLock(hApp, PEHeader->OptionalHeader.SizeOfImage);
 	argv[0] = (char*)hApp + (int)PEHeader->OptionalHeader.BaseOfCode;
 	((void(*)())(argv[0]))(); //calls the benchmark function, making sure it returns
@@ -99,7 +98,7 @@ int main(int argc, char** argv)
 		NULL, OPEN_EXISTING, 0 , NULL);
 
 	DeviceIoControl(hDevice,
-		0x69,
+		BENCHMARK_DRV_IOCTL,
 		argv,
 		sizeof(char*)*argc,
 		bufferOut,
