@@ -264,7 +264,7 @@ void MeasureApp(
 	IN char** inputBuffer
 )
 {
-	void(*EntryPoint)() = (void(*)())inputBuffer[0];
+	void(*EntryPoint)() = (void(*)())(inputBuffer[0]);
 	PIRP Irp = (PIRP)(inputBuffer[1]);
 	PIO_STACK_LOCATION IrpSp;
 	int inputBufferlen;
