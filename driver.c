@@ -200,32 +200,42 @@ NTSTATUS IoCtlDispatch(
 	if (IrpSp) {
 		switch (IoControlCode) {
 		case BENCHMARK_DRV_IOCTL:
-			PsCreateSystemThread(&hThread,
+			if (PsCreateSystemThread(&hThread,
 				THREAD_ALL_ACCESS,
 				NULL,
 				hProcess,
 				NULL,
 				MeasureApp,
-				inputBuffer
-			);
+				inputBuffer))
+			{
+				Status = STATUS_BAD_DATA;
+				break;
+			};
 
-			ObReferenceObjectByHandle(
+			if (ObReferenceObjectByHandle(
 				hThread,
 				THREAD_ALL_ACCESS,
 				NULL,
 				KernelMode,
 				(PVOID*)&ThreadObject,
-				NULL
-			);
+				NULL)) 
+			{
+				Status = STATUS_BAD_DATA;
+				break;
+			};
 
 			if (ThreadObject)
 			{
-				KeWaitForSingleObject(
+				if (KeWaitForSingleObject(
 					ThreadObject,
 					Executive,
 					KernelMode,
 					FALSE,
-					0);
+					0))
+				{
+					Status = STATUS_BAD_DATA;
+					break;
+				};
 
 				ObDereferenceObject(ThreadObject);
 			}
@@ -233,7 +243,6 @@ NTSTATUS IoCtlDispatch(
 			break;
 
 		default:
-			DbgPrint("[-] Invalid IOCTL Code: 0x%X\n", IoControlCode);
 			Status = STATUS_INVALID_DEVICE_REQUEST;
 			break;
 		}
@@ -252,8 +261,6 @@ void MeasureApp(
 	IN char** inputBuffer
 )
 {
-	unsigned long long int before = 0;
-	unsigned long long int after = 0;
 	void(*EntryPoint)() = inputBuffer[0];
 	PIRP Irp = inputBuffer[1];
 	PIO_STACK_LOCATION IrpSp;
@@ -267,7 +274,6 @@ void MeasureApp(
 	PULONGLONG CountBuffer = ExAllocatePool(NonPagedPool, inputBufferlen);
 
 	oldIrql = KeRaiseIrqlToSynchLevel();
-
 	
 	for (int j = 2; j < numParams; j++) {
 		for (int i = 0; i < sizeof(Events) / sizeof(ULONGLONG); i++) {
@@ -296,7 +302,9 @@ void MeasureApp(
 	
 	KeLowerIrql(oldIrql);
 
-	Irp->UserBuffer = CountBuffer;
+	RtlcopyMemory(Irp->UserBuffer, CountBuffer, inputBufferlen);
+	ExFreePool(MSRBuffer);
+	ExFreePool(CountBuffer);
 
 	return;
 }
