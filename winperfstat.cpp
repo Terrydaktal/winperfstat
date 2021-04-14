@@ -18,9 +18,11 @@ int InstallAndStartDriver() {
 	LPCSTR SubKey = "System\\CurrentControlSet\\Services\\winperfstat";
 	HKEY hKey;
 	DWORD ErrorControl = 1;
+	DWORD StartType = 3;
 	PBOOL FileWasInUse = NULL;
+	LSTATUS status;
 
-	if (LSTATUS status = RegCreateKeyExA(HKEY_LOCAL_MACHINE,
+	if (status = RegCreateKeyExA(HKEY_LOCAL_MACHINE,
 		SubKey,
 		NULL, NULL,
 		REG_OPTION_NON_VOLATILE,
@@ -47,7 +49,8 @@ int InstallAndStartDriver() {
 		if (SetupInstallFileW(HInf, NULL, SourceFile, SourcePathRoot, DriverInstallPath,
 			SP_COPY_NEWER_OR_SAME, NULL, FileWasInUse)) {
 
-			if (SC_HANDLE service = CreateService(manager,
+			SC_HANDLE service;
+			service = CreateService(manager,
 				DriverName,
 				DriverName,
 				SERVICE_ALL_ACCESS,
@@ -55,29 +58,29 @@ int InstallAndStartDriver() {
 				SERVICE_AUTO_START,
 				SERVICE_ERROR_NORMAL,
 				DriverInstallPath,
-				NULL, NULL, NULL, NULL, NULL)
-				) {
+				NULL, NULL, NULL, NULL, NULL);
+
+			RegSetValueEx(hKey, L"Start", NULL, REG_DWORD, (LPBYTE)&StartType, sizeof(DWORD));
 				
-				if (!StartService(service, NULL, NULL)) {
-					return 3;
-				}
+			if (GetLastError() == ERROR_SERVICE_EXISTS) { //1073
+				service = OpenService(manager, DriverName, SERVICE_ALL_ACCESS);
 			}
-			else {
-				return 4;
-			}
+
+			status = StartService(service, NULL, NULL);
+			return GetLastError() == ERROR_SERVICE_ALREADY_RUNNING | status == TRUE ? 0 : 3; //1056
 		}
+
 		else {
-			return GetLastError();
+			return 4;
 		}
 	}
 	else {
-		return 6;
+		return 5;
 	}
-
 	return 0;
 }
 
-int main(int argc, char** argv)
+int main(int argc, CHAR** argv)
 {
 	HANDLE hDevice;
 	PCWSTR SymLink = L"\\\\.\\winperfstat\\";
@@ -85,40 +88,43 @@ int main(int argc, char** argv)
 	LPCSTR AppName = argv[1];
 	HMODULE hApp;
 	PIMAGE_NT_HEADERS64 PEHeader;
-	char bufferOut[1000] = { 0 };
+	CHAR bufferOut[1000] = { 0 };
 
-	if (int i = InstallAndStartDriver()) {  //if driver not installed, install; if driver not started, start
+	if (INT i = InstallAndStartDriver()) {  //if driver not installed, install; if driver not started, start
 		std::cout << "error" << i;        //if error during install start / install check
 		return false;     
 	}; 
 
+	INT n;
+	std::cout << "done1";
+	std::cin >> n;
+
 	hApp = LoadLibraryA(AppName); 
-	PEHeader = ((PIMAGE_NT_HEADERS64)((PBYTE)hApp + (int)(*((PBYTE)hApp + 0x3c))));
+	PEHeader = ((PIMAGE_NT_HEADERS64)((PBYTE)hApp + (INT)(*((PBYTE)hApp + 0x3c))));
 	VirtualLock(hApp, PEHeader->OptionalHeader.SizeOfImage);
-	argv[0] = (char*)hApp + (int)PEHeader->OptionalHeader.BaseOfCode;
-	((void(*)())(argv[0]))(); //calls the benchmark function, making sure it returns
+	argv[0] = (CHAR*)hApp + (INT)PEHeader->OptionalHeader.BaseOfCode;
+	((VOID(*)())(argv[0]))(); //calls the benchmark function, making sure it returns
 
 	hDevice = CreateFileW(SymLink,
 		FILE_READ_ACCESS|FILE_WRITE_ACCESS,
 		FILE_SHARE_READ|FILE_SHARE_WRITE,
 		NULL, OPEN_EXISTING, 0 , NULL);
 	
-	std::cout << "done";
+	std::cout << "done2";
 
 	DeviceIoControl(hDevice,
 		BENCHMARK_DRV_IOCTL,
 		argv,
-		sizeof(char*)*argc,
+		sizeof(CHAR*)*argc,
 		bufferOut,
 		sizeof(bufferOut),
 		&bytesReturned, NULL);
 
 	VirtualUnlock(hApp, PEHeader->OptionalHeader.SizeOfImage);
 	FreeLibrary(hApp);
-	for (int i = 2; i < argc; i++) {
-		std::cout << argv[i] << ":   " << ((unsigned long long*)bufferOut)[i] << "\n";
+	for (INT i = 2; i < argc; i++) {
+		std::cout << argv[i] << ":   " << ((ULONGLONG*)bufferOut)[i] << "\n";
 	}
 
 	return 0;
 }
-
