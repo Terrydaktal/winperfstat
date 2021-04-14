@@ -86,6 +86,8 @@ NTSTATUS DriverEntry(
 )
 {
 	UNREFERENCED_PARAMETER(RegistryPath);
+	PAGED_CODE();
+
 	PDEVICE_OBJECT DeviceObject = NULL;
 	NTSTATUS Status = STATUS_UNSUCCESSFUL;
 	UNICODE_STRING DeviceName, DosDeviceName = { 0 };
@@ -96,7 +98,7 @@ NTSTATUS DriverEntry(
 		0,
 		&DeviceName,
 		FILE_DEVICE_UNKNOWN,
-		0,
+		FILE_DEVICE_SECURE_OPEN,
 		FALSE,
 		&DeviceObject);
 
@@ -109,10 +111,10 @@ NTSTATUS DriverEntry(
 	}
 
 	for (int i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++) {
-#pragma warning(push) // Disable the Compiler Warning: 28169
-#pragma warning(disable : 28169) 
+		#pragma warning(push) // Disable the Compiler Warning: 28169
+		#pragma warning(disable : 28169) 
 		DriverObject->MajorFunction[i] = NotImplementedDispatch;
-#pragma warning(pop)
+		#pragma warning(pop)
 	}
 
 	DriverObject->MajorFunction[IRP_MJ_CREATE] = CreateCloseDispatch;
