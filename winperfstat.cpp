@@ -1,3 +1,6 @@
+// ConsoleApplication2.cpp : This file contains the 'main' function. Program execution begins and ends there.
+//
+
 #include <iostream>
 #include <Windows.h>
 #include <setupapi.h>
@@ -11,7 +14,7 @@ int InstallAndStartDriver() {
 	PCWSTR DriverName = L"winperfstat";
 	PCWSTR SourceFile = L"winperfstat.sys";
 	PCWSTR SourcePathRoot = L"C:\\Users\\lewis\\source\\repos\\ConsoleApplication2\\x64\\Release\\";
-	PCWSTR DriverInstallPath = L"C:\\Windows\\system32\\drivers\\winperfstat.sys";
+	PCWSTR DriverInstallPath = L"C:\\Users\\lewis\\source\\repos\\ConsoleApplication2\\x64\\Release\\winperfstat.sys";
 	LPCSTR SubKey = "System\\CurrentControlSet\\Services\\winperfstat";
 	HKEY hKey;
 	DWORD ErrorControl = 1;
@@ -28,7 +31,7 @@ int InstallAndStartDriver() {
 		&hKey,
 		NULL)) 
 	{
-		return status;
+		return 1;
 	}
 	else {
 		if (RegSetValueEx(hKey, L"DriverName", NULL, REG_SZ, (LPBYTE)DriverName, sizeof(wchar_t)*(wcslen(DriverName) + 1))
@@ -52,19 +55,18 @@ int InstallAndStartDriver() {
 				DriverName,
 				SERVICE_ALL_ACCESS,
 				SERVICE_KERNEL_DRIVER,
-				SERVICE_AUTO_START,
+				SERVICE_DEMAND_START,
 				SERVICE_ERROR_NORMAL,
 				DriverInstallPath,
 				NULL, NULL, NULL, NULL, NULL);
-
-			RegSetValueEx(hKey, L"Start", NULL, REG_DWORD, (LPBYTE)&StartType, sizeof(DWORD));
 				
 			if (GetLastError() == ERROR_SERVICE_EXISTS) { //1073
 				service = OpenService(manager, DriverName, SERVICE_ALL_ACCESS);
 			}
 
 			status = StartService(service, NULL, NULL);
-			return GetLastError() == ERROR_SERVICE_ALREADY_RUNNING | status == TRUE ? 0 : 3; //1056
+			DWORD error = GetLastError();
+			return  error == ERROR_SERVICE_ALREADY_RUNNING | status == TRUE ? 0 : error; //1056
 		}
 
 		else {
@@ -92,10 +94,6 @@ int main(int argc, CHAR** argv)
 		return false;     
 	}; 
 
-	int n;
-	std::cout << "done1";
-	std::cin >> n;
-
 	hApp = LoadLibraryA(AppName); 
 	PEHeader = ((PIMAGE_NT_HEADERS64)((PBYTE)hApp + (int)(*((PBYTE)hApp + 0x3c))));
 	VirtualLock(hApp, PEHeader->OptionalHeader.SizeOfImage);
@@ -106,8 +104,6 @@ int main(int argc, CHAR** argv)
 		FILE_READ_ACCESS|FILE_WRITE_ACCESS,
 		FILE_SHARE_READ|FILE_SHARE_WRITE,
 		NULL, OPEN_EXISTING, 0 , NULL);
-	
-	std::cout << "done2";
 
 	DeviceIoControl(hDevice,
 		BENCHMARK_DRV_IOCTL,
@@ -125,4 +121,3 @@ int main(int argc, CHAR** argv)
 
 	return 0;
 }
-
