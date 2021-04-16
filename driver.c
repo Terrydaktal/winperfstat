@@ -1,13 +1,11 @@
 #include <ntddk.h>
 #include <initguid.h>
 
-//#include "wdm.h"
-
 NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING RegistryPath);
 NTSTATUS NotImplementedDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 NTSTATUS IoCtlDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 VOID UnloadHandler(IN PDRIVER_OBJECT DriverObject);
-VOID MeasureApp(IN char** inputBuffer);
+VOID MeasureApp(IN unsigned long long * outputBuffer);
 NTSTATUS CreateCloseDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 
 #ifdef ALLOC_PRAGMA
@@ -23,7 +21,7 @@ NTSTATUS CreateCloseDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 #define IA32_PERF_EVTSEL(x) 0x186+x
 #define BuildEvent(EVT, UMASK, USR, OS, E, PC, INTT, ANY, EN, INV, CMASK) (EVT + (UMASK << 8) + (USR << 16) + (OS << 17) + (E << 18) + (PC << 19) + (INTT << 20) + (ANY << 21) + (EN << 22) + (INV << 23) + (CMASK << 24))
 
-LPCSTR Events[26] = {
+char* Events[26] = {
 	"LD_BLOCKS.STORE_FORWARD", //strings automatically get nul character
 	"LD_BLOCKS.NO_SR",
 	"LD_BLOCKS_PARTIAL.ADDRESS_ALIAS",
@@ -34,6 +32,7 @@ LPCSTR Events[26] = {
 	"DTLB_LOAD_MISSES.STLB_HIT",
 	"INT_MISC.RECOVERY_CYCLES",
 	"INT_MISC.RECOVERY_CYCLES_ANY",
+
 	"INT_MISC.CLEAR_RESTEER_CYCLES",
 	"UOPS_ISSUED.ANY",
 	"UOPS_ISSUED.STALL_CYCLES",
@@ -44,11 +43,13 @@ LPCSTR Events[26] = {
 	"L2_RQSTS.RFO_MISS",
 	"L2_RQSTS.CODE_RD_MISS",
 	"L2_RQSTS.ALL_DEMAND_MISS",
+	
 	"L2_RQSTS.PF_MISS",
 	"L2_RQSTS.MISS",
 	"L2_RQSTS.DEMAND_DATA_RD_HIT",
 	"L2_RQSTS.RFO_HIT",
-	"L2_RQSTS.DEMAND_DATA_RD_HIT"
+	"L2_RQSTS.CODE_RD_HIT",
+	"L2_RQSTS.PF_HIT"
 };
 
 unsigned long long int EventMSRValues[26] = {
@@ -62,6 +63,7 @@ unsigned long long int EventMSRValues[26] = {
 	BuildEvent(0x8, 0x20, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0xD, 0x1, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0xD, 0x1, 0x1, 0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0),
+	BuildEvent(0xD, 0x80, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0xE, 0x1, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0xE, 0x1, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x1, 0x1),
 	BuildEvent(0xE, 0x2, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
@@ -77,8 +79,9 @@ unsigned long long int EventMSRValues[26] = {
 	BuildEvent(0x24, 0x42, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0x24, 0x44, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0x24, 0xD8, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
-	BuildEvent(0x24, 0xE1, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0)
 };
+
+unsigned long long * output;
 
 NTSTATUS DriverEntry(
 	IN PDRIVER_OBJECT DriverObject,
@@ -119,12 +122,11 @@ NTSTATUS DriverEntry(
 			IoDeleteDevice(DeviceObject);
 		}
 
-		KeBugCheck(1);
 		return Status;
 	}
 
 	Status = IoCreateSymbolicLink(&DosDeviceName, &DeviceName);
-	if (Status != STATUS_SUCCESS) KeBugCheck(2);
+	if (Status != STATUS_SUCCESS) return Status;
 
 	DeviceObject->Flags |= DO_DIRECT_IO;
 	DeviceObject->Flags &= ~DO_DEVICE_INITIALIZING;
@@ -193,7 +195,7 @@ NTSTATUS IoCtlDispatch(
 
 	PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
 	ULONG IoControlCode = IrpSp->Parameters.DeviceIoControl.IoControlCode; // no minor code only io control code
-	NTSTATUS Status = STATUS_NOT_SUPPORTED;
+	NTSTATUS Status = STATUS_BAD_DATA;
 	unsigned long long * inputBuffer;
 	int inputBufferlen;
 	HANDLE hThread;
@@ -202,7 +204,10 @@ NTSTATUS IoCtlDispatch(
 
 	inputBuffer = IrpSp->Parameters.DeviceIoControl.Type3InputBuffer;
 	inputBufferlen = IrpSp->Parameters.DeviceIoControl.InputBufferLength;
-	
+	output = ExAllocatePool(NonPagedPool, inputBufferlen);
+	RtlZeroMemory(output, inputBufferlen);
+	output[0] = (unsigned long long) inputBuffer;
+
 	__try {
 		ProbeForWrite(inputBuffer, inputBufferlen, 1);
 		inputBuffer[1] = (unsigned long long) Irp;
@@ -221,9 +226,8 @@ NTSTATUS IoCtlDispatch(
 				hProcess,
 				NULL,
 				MeasureApp,
-				inputBuffer))
+				output))
 			{
-				Status = STATUS_BAD_DATA;
 				break;
 			};
 
@@ -235,7 +239,6 @@ NTSTATUS IoCtlDispatch(
 				(PVOID*)&ThreadObject,
 				NULL))
 			{
-				Status = STATUS_BAD_DATA;
 				break;
 			};
 
@@ -248,7 +251,6 @@ NTSTATUS IoCtlDispatch(
 					FALSE,
 					0))
 				{
-					Status = STATUS_BAD_DATA;
 					break;
 				};
 
@@ -257,84 +259,80 @@ NTSTATUS IoCtlDispatch(
 			Status = STATUS_SUCCESS;
 			break;
 
-		default:
-			fail:
-			Status = STATUS_INVALID_DEVICE_REQUEST;
+		default: fail:
 			break;
 		}
 	}
 
 	Irp->IoStatus.Status = Status;
-	Irp->IoStatus.Information = 0;
+	Irp->IoStatus.Information = inputBufferlen;
 
-	// Complete the request
+	RtlCopyMemory(Irp->UserBuffer, output, inputBufferlen);
+	ExFreePool(output);
+
 	IoCompleteRequest(Irp, IO_NO_INCREMENT);
 
 	return Status;
 }
 
 void MeasureApp(
-	IN char** inputBuffer
+	IN unsigned long long* outputBuffer
 )
 {
-	PVOID hSection = MmLockPagableCodeSection(MeasureApp);
+	char ** inputBuffer = (char **) (outputBuffer[0]);
+	PVOID hSection;
 	void(*EntryPoint)() = (void(*)())(inputBuffer[0]);
 	PIRP Irp = (PIRP)(inputBuffer[1]);
 	PIO_STACK_LOCATION IrpSp;
-	int inputBufferlen;
+	ULONG inputBufferlen;
 	KIRQL oldIrql;
-	int numParams;
 	IrpSp = IoGetCurrentIrpStackLocation(Irp);
 	inputBufferlen = IrpSp->Parameters.DeviceIoControl.InputBufferLength;
-	numParams = inputBufferlen / sizeof(PVOID);
+	ULONG numParams = inputBufferlen / sizeof(PVOID);
 	PULONGLONG MSRBuffer = ExAllocatePool(NonPagedPool, inputBufferlen);
-	PULONGLONG CountBuffer = ExAllocatePool(NonPagedPool, inputBufferlen);
-	ANSI_STRING aevstr, ainstr;
-	UNICODE_STRING evstr, instr;
+	ANSI_STRING aevstr = { 0 }, ainstr = { 0 };
+	UNICODE_STRING evstr =  { 0 }, instr = { 0 };
+	RtlZeroMemory(MSRBuffer, inputBufferlen);
 
-	for (int j = 2; j < numParams; j++) {
+	for (unsigned j = 2; j < numParams; j++) {
 		RtlInitAnsiString(&ainstr, inputBuffer[j]);
 		RtlAnsiStringToUnicodeString(&instr, &ainstr, TRUE);
 		
-		for (int i = 0; i < sizeof(Events) / sizeof(ULONGLONG); i++) {
+		for (unsigned i = 0; i < sizeof(Events) / sizeof(ULONGLONG); i++) {
 			RtlInitAnsiString(&aevstr, Events[i]);
 			RtlAnsiStringToUnicodeString(&evstr, &aevstr, TRUE);
 			if (RtlEqualUnicodeString(&evstr, &instr, OBJ_CASE_INSENSITIVE))
 			{
 				MSRBuffer[j] = EventMSRValues[i];
 			}
+			RtlFreeUnicodeString(&evstr);
 		}
+		RtlFreeUnicodeString(&instr);
 	}
 
+	hSection = MmLockPagableCodeSection(MeasureApp);
 	oldIrql = KeRaiseIrqlToSynchLevel();
 
-	for (int i = 2; i < numParams; i++) {
+	for (unsigned i = 2; i < numParams; i++) {
 		if (MSRBuffer[i]) {
-			__writemsr(IA32_PERF_EVTSEL(0), MSRBuffer[i]);
-			CountBuffer[i] = __readpmc(0);
+			__writemsr(IA32_PERF_EVTSEL(i-2), MSRBuffer[i]);
+			outputBuffer[i] = __readpmc(i-2);
 		}
 	}
 
 	EntryPoint();
 
-	for (int i = 2; i < numParams; i++) {
+	for (unsigned i = 2; i < numParams; i++) {
 		if (MSRBuffer[i]) {
-			__writemsr(IA32_PERF_EVTSEL(0), MSRBuffer[i]);
-			CountBuffer[i] = __readpmc(0) - CountBuffer[i];
+			outputBuffer[i] = __readpmc(i-2) - outputBuffer[i];
 		}
 	}
 
 	KeLowerIrql(oldIrql);
 
 	MmUnlockPagableImageSection(hSection);
-	
-	CountBuffer[2] = __readpmc(0);
 
-	CountBuffer[3] = 3;
-
-	RtlCopyMemory(Irp->UserBuffer, CountBuffer, inputBufferlen);
 	ExFreePool(MSRBuffer);
-	ExFreePool(CountBuffer);
 
 	return;
 }
