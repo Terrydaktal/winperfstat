@@ -21,7 +21,7 @@ NTSTATUS CreateCloseDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 #define IA32_PERF_EVTSEL(x) 0x186+x
 #define BuildEvent(EVT, UMASK, USR, OS, E, PC, INTT, ANY, EN, INV, CMASK) (EVT + (UMASK << 8) + (USR << 16) + (OS << 17) + (E << 18) + (PC << 19) + (INTT << 20) + (ANY << 21) + (EN << 22) + (INV << 23) + (CMASK << 24))
 
-char* Events[26] = {
+char* Events[31] = {
 	"LD_BLOCKS.STORE_FORWARD", //strings automatically get nul character
 	"LD_BLOCKS.NO_SR",
 	"LD_BLOCKS_PARTIAL.ADDRESS_ALIAS",
@@ -49,10 +49,16 @@ char* Events[26] = {
 	"L2_RQSTS.DEMAND_DATA_RD_HIT",
 	"L2_RQSTS.RFO_HIT",
 	"L2_RQSTS.CODE_RD_HIT",
-	"L2_RQSTS.PF_HIT"
+	"L2_RQSTS.PF_HIT",
+	"UOPS_RETIRED.RETIRE_SLOTS",
+	"UOPS_RETIRED.ALL",
+	"UOPS_RETIRED.ACTIVE_CYCLES",
+	"UOPS_RETIRED.STALL_CYCLES",
+
+	"UOPS_ISSUED.FLAGS_MERGE"
 };
 
-unsigned long long int EventMSRValues[26] = {
+unsigned long long int EventMSRValues[31] = {
 	BuildEvent(0x3, 0x2, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0x3, 0x8, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0x7, 0x1, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
@@ -63,6 +69,7 @@ unsigned long long int EventMSRValues[26] = {
 	BuildEvent(0x8, 0x20, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0xD, 0x1, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0xD, 0x1, 0x1, 0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0),
+
 	BuildEvent(0xD, 0x80, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0xE, 0x1, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0xE, 0x1, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x1, 0x1),
@@ -73,15 +80,21 @@ unsigned long long int EventMSRValues[26] = {
 	BuildEvent(0x24, 0x22, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0x24, 0x24, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0x24, 0x27, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
+	
 	BuildEvent(0x24, 0x38, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0x24, 0x3F, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0x24, 0x41, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0x24, 0x42, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0x24, 0x44, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0x24, 0xD8, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
-};
+	BuildEvent(0xC2, 0x02, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
+	BuildEvent(0xC2, 0x01, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
+	BuildEvent(0xC2, 0x01, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x1),
+	BuildEvent(0xC2, 0x01, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x1, 0x1),
 
-unsigned long long * output;
+	BuildEvent(0x0E, 0x10, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
+
+};
 
 NTSTATUS DriverEntry(
 	IN PDRIVER_OBJECT DriverObject,
@@ -192,112 +205,35 @@ NTSTATUS IoCtlDispatch(
 {
 	UNREFERENCED_PARAMETER(DeviceObject);
 	PAGED_CODE();
-
-	PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
-	ULONG IoControlCode = IrpSp->Parameters.DeviceIoControl.IoControlCode; // no minor code only io control code
-	NTSTATUS Status = STATUS_BAD_DATA;
-	unsigned long long * inputBuffer;
-	int inputBufferlen;
+	
 	HANDLE hThread;
 	PETHREAD ThreadObject;
+	PULONGLONG MSRBuffer = NULL;
+	unsigned long long * output = NULL;
+	NTSTATUS Status = STATUS_BAD_DATA;
+	PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
+	if (!IrpSp) goto fail;
+	ULONG IoControlCode = IrpSp->Parameters.DeviceIoControl.IoControlCode; // no minor code only io control code
+	if (IoControlCode != BENCHMARK_DRV_IOCTL) goto fail;
+	unsigned long long * inputBuffer = IrpSp->Parameters.DeviceIoControl.Type3InputBuffer;
+	ULONGLONG inputBufferlen = IrpSp->Parameters.DeviceIoControl.InputBufferLength;
 	HANDLE hProcess = ZwCurrentProcess();
+	ULONG numParams = inputBufferlen / sizeof(PVOID);
+	ANSI_STRING aevstr = { 0 }, ainstr = { 0 };
+	UNICODE_STRING evstr = { 0 }, instr = { 0 };
 
-	inputBuffer = IrpSp->Parameters.DeviceIoControl.Type3InputBuffer;
-	inputBufferlen = IrpSp->Parameters.DeviceIoControl.InputBufferLength;
+	MSRBuffer = ExAllocatePool(NonPagedPool, inputBufferlen);
+	RtlZeroMemory(MSRBuffer, inputBufferlen);
 	output = ExAllocatePool(NonPagedPool, inputBufferlen);
 	RtlZeroMemory(output, inputBufferlen);
-	output[0] = (unsigned long long) inputBuffer;
 
-	__try {
-		ProbeForWrite(inputBuffer, inputBufferlen, 1);
-		inputBuffer[1] = (unsigned long long) Irp;
-	} 
-	__except(EXCEPTION_EXECUTE_HANDLER)
-	{
-		goto fail;
-	}
-
-	if (IrpSp) {
-		switch (IoControlCode) {
-		case BENCHMARK_DRV_IOCTL:
-			if (PsCreateSystemThread(&hThread,
-				THREAD_ALL_ACCESS,
-				NULL,
-				hProcess,
-				NULL,
-				MeasureApp,
-				output))
-			{
-				break;
-			};
-
-			if (ObReferenceObjectByHandle(
-				hThread,
-				THREAD_ALL_ACCESS,
-				NULL,
-				KernelMode,
-				(PVOID*)&ThreadObject,
-				NULL))
-			{
-				break;
-			};
-
-			if (ThreadObject)
-			{
-				if (KeWaitForSingleObject(
-					ThreadObject,
-					Executive,
-					KernelMode,
-					FALSE,
-					0))
-				{
-					break;
-				};
-
-				ObDereferenceObject(ThreadObject);
-			}
-			Status = STATUS_SUCCESS;
-			break;
-
-		default: fail:
-			break;
-		}
-	}
-
-	Irp->IoStatus.Status = Status;
-	Irp->IoStatus.Information = inputBufferlen;
-
-	RtlCopyMemory(Irp->UserBuffer, output, inputBufferlen);
-	ExFreePool(output);
-
-	IoCompleteRequest(Irp, IO_NO_INCREMENT);
-
-	return Status;
-}
-
-void MeasureApp(
-	IN unsigned long long* outputBuffer
-)
-{
-	char ** inputBuffer = (char **) (outputBuffer[0]);
-	PVOID hSection;
-	void(*EntryPoint)() = (void(*)())(inputBuffer[0]);
-	PIRP Irp = (PIRP)(inputBuffer[1]);
-	PIO_STACK_LOCATION IrpSp;
-	ULONG inputBufferlen;
-	KIRQL oldIrql;
-	IrpSp = IoGetCurrentIrpStackLocation(Irp);
-	inputBufferlen = IrpSp->Parameters.DeviceIoControl.InputBufferLength;
-	ULONG numParams = inputBufferlen / sizeof(PVOID);
-	PULONGLONG MSRBuffer = ExAllocatePool(NonPagedPool, inputBufferlen);
-	ANSI_STRING aevstr = { 0 }, ainstr = { 0 };
-	UNICODE_STRING evstr =  { 0 }, instr = { 0 };
-	RtlZeroMemory(MSRBuffer, inputBufferlen);
+	//int threadsRequired = (numParams - 2) / 4 + !!((numParams - 2) % 4);
+	//HANDLE* threads = ExAllocatePool(NonPagedPool, threadsRequired*sizeof(HANDLE*));
 
 	for (unsigned j = 2; j < numParams; j++) {
-		RtlInitAnsiString(&ainstr, inputBuffer[j]);
+		RtlInitAnsiString(&ainstr, (char*)(inputBuffer[j]));
 		RtlAnsiStringToUnicodeString(&instr, &ainstr, TRUE);
-		
+
 		for (unsigned i = 0; i < sizeof(Events) / sizeof(ULONGLONG); i++) {
 			RtlInitAnsiString(&aevstr, Events[i]);
 			RtlAnsiStringToUnicodeString(&evstr, &aevstr, TRUE);
@@ -310,21 +246,142 @@ void MeasureApp(
 		RtlFreeUnicodeString(&instr);
 	}
 
+	__try {
+		ProbeForRead(inputBuffer, inputBufferlen, 1);
+		ProbeForWrite(inputBuffer, inputBufferlen, 1);
+		ProbeForRead(Irp->UserBuffer, inputBufferlen, 1);
+		ProbeForWrite(Irp->UserBuffer, inputBufferlen, 1);
+	} 
+	__except(EXCEPTION_EXECUTE_HANDLER)
+	{
+		goto fail;
+	}
+
+	inputBuffer[1] = (unsigned long long) Irp;
+
+	unsigned long long threadparams[4] = {numParams, inputBuffer[0], (unsigned long long) MSRBuffer, (unsigned long long) output};
+
+	if (PsCreateSystemThread(&hThread,
+		THREAD_ALL_ACCESS,
+		NULL,
+		hProcess,
+		NULL,
+		MeasureApp,
+	    threadparams))
+	{
+		goto fail;
+	};
+
+
+
+	if (ObReferenceObjectByHandle(
+		hThread,
+		THREAD_ALL_ACCESS,
+		NULL,
+		KernelMode,
+		(PVOID*)&ThreadObject,
+		NULL))
+	{
+		goto fail;
+	};
+
+	if (ThreadObject)
+		{
+		if (KeWaitForSingleObject(
+			ThreadObject,
+			Executive,
+			KernelMode,
+			FALSE,
+			0))
+		{
+			goto fail;
+		};
+
+		ObDereferenceObject(ThreadObject);
+	}
+
+	Status = STATUS_SUCCESS;
+	Irp->IoStatus.Information = inputBufferlen;
+	RtlCopyMemory(Irp->UserBuffer, output, inputBufferlen);
+
+	fail:
+	Irp->IoStatus.Status = Status;
+	ExFreePool(output);
+	ExFreePool(MSRBuffer);
+	
+	IoCompleteRequest(Irp, IO_NO_INCREMENT);
+
+	return Status;
+}
+
+void MeasureApp(
+	IN unsigned long long* threadparams
+)
+{
+	KIRQL oldIrql;
+	PVOID hSection;
+	ULONG numParams = (ULONG)threadparams[0];
+	void(*EntryPoint)() = (void(*)())(threadparams[1]);
+	unsigned long long* MSRBuffer = (unsigned long long*) threadparams[2];
+	unsigned long long* outputBuffer = (unsigned long long*) threadparams[3];
+	ULONGLONG inputBufferlen = numParams * sizeof(unsigned long long);
+	PULONGLONG countBuffer = ExAllocatePool(NonPagedPool, inputBufferlen);
+	RtlZeroMemory(countBuffer, inputBufferlen);
 	hSection = MmLockPagableCodeSection(MeasureApp);
 	oldIrql = KeRaiseIrqlToSynchLevel();
-
+	
 	for (unsigned i = 2; i < numParams; i++) {
+
 		if (MSRBuffer[i]) {
-			__writemsr(IA32_PERF_EVTSEL(i-2), MSRBuffer[i]);
-			outputBuffer[i] = __readpmc(i-2);
+			__writemsr(IA32_PERF_EVTSEL((i - 2)%4), MSRBuffer[i]);
+		}
+
+		if (!((i-1) % 4)) {
+			countBuffer[i-3] = __readpmc(0);
+			countBuffer[i-2] = __readpmc(1);
+			countBuffer[i-1] = __readpmc(2);
+			countBuffer[i] = __readpmc(3);
+			EntryPoint();
+			outputBuffer[i-3] = __readpmc(0);
+			outputBuffer[i-2] = __readpmc(1);
+			outputBuffer[i-1] = __readpmc(2);
+			outputBuffer[i] = __readpmc(3);
 		}
 	}
 
-	EntryPoint();
+	switch ((numParams-2) % 4) {
+		case 1:
+			__writemsr(IA32_PERF_EVTSEL(0), MSRBuffer[numParams-1]);
+			countBuffer[numParams - 1] = __readpmc(0);
+			EntryPoint();
+			outputBuffer[numParams - 1] = __readpmc(0);
+			
+
+		case 2:
+			__writemsr(IA32_PERF_EVTSEL(0), MSRBuffer[numParams - 1]);
+			__writemsr(IA32_PERF_EVTSEL(1), MSRBuffer[numParams - 2]);
+			countBuffer[numParams - 1] = __readpmc(0);
+			countBuffer[numParams - 2] = __readpmc(1);
+			EntryPoint();
+			outputBuffer[numParams - 1] = __readpmc(0);
+			outputBuffer[numParams - 2] = __readpmc(1);
+
+		case 3:
+			__writemsr(IA32_PERF_EVTSEL(0), MSRBuffer[numParams - 1]);
+			__writemsr(IA32_PERF_EVTSEL(1), MSRBuffer[numParams - 2]);
+			__writemsr(IA32_PERF_EVTSEL(2), MSRBuffer[numParams - 3]);
+			countBuffer[numParams - 1] = __readpmc(0);
+			countBuffer[numParams - 2] = __readpmc(1);
+			countBuffer[numParams - 3] = __readpmc(2);
+			EntryPoint();
+			outputBuffer[numParams - 1] = __readpmc(0);
+			outputBuffer[numParams - 2] = __readpmc(1);
+			outputBuffer[numParams - 3] = __readpmc(2);
+	}
 
 	for (unsigned i = 2; i < numParams; i++) {
 		if (MSRBuffer[i]) {
-			outputBuffer[i] = __readpmc(i-2) - outputBuffer[i];
+			outputBuffer[i] = outputBuffer[i] - countBuffer[i];
 		}
 	}
 
@@ -332,7 +389,7 @@ void MeasureApp(
 
 	MmUnlockPagableImageSection(hSection);
 
-	ExFreePool(MSRBuffer);
+	ExFreePool(countBuffer);
 
 	return;
 }
