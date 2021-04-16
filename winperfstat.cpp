@@ -1,11 +1,8 @@
-// ConsoleApplication2.cpp : This file contains the 'main' function. Program execution begins and ends there.
-//
-
 #include <iostream>
 #include <Windows.h>
 #include <setupapi.h>
 
-#define BENCHMARK_DRV_IOCTL 0x69
+#define BENCHMARK_DRV_IOCTL CTL_CODE(FILE_DEVICE_UNKNOWN, 0x902, METHOD_NEITHER, FILE_ANY_ACCESS)
 
 int InstallAndStartDriver() {
 
@@ -82,12 +79,14 @@ int InstallAndStartDriver() {
 int main(int argc, CHAR** argv)
 {
 	HANDLE hDevice;
-	PCWSTR SymLink = L"\\\\.\\winperfstat\\";
+	PCWSTR SymLink = L"\\\\.\\winperfstat";
 	DWORD bytesReturned;
 	LPCSTR AppName = argv[1];
 	HMODULE hApp;
 	PIMAGE_NT_HEADERS64 PEHeader;
-	char bufferOut[1000] = { 0 };
+	size_t bufferSize = sizeof(unsigned long long)*argc;
+	unsigned long long* bufferOut = (unsigned long long*) malloc (bufferSize);
+	int result;
 
 	if (int i = InstallAndStartDriver()) {  //if driver not installed, install; if driver not started, start
 		std::cout << "error" << i;        //if error during install start / install check
@@ -96,28 +95,34 @@ int main(int argc, CHAR** argv)
 
 	hApp = LoadLibraryA(AppName); 
 	PEHeader = ((PIMAGE_NT_HEADERS64)((PBYTE)hApp + (int)(*((PBYTE)hApp + 0x3c))));
-	VirtualLock(hApp, PEHeader->OptionalHeader.SizeOfImage);
+	result = VirtualLock(hApp, PEHeader->OptionalHeader.SizeOfImage);
 	argv[0] = (char*)hApp + (int)PEHeader->OptionalHeader.BaseOfCode;
-	((void(*)())(argv[0]))(); //calls the benchmark function, making sure it returns
+	((void(*)())(argv[0]))(); //calls the benchmark function, making sure it returns and without error
+	                          //don't need SEH handler because there's one in RtlUserThreadStart
 
 	hDevice = CreateFileW(SymLink,
 		FILE_READ_ACCESS|FILE_WRITE_ACCESS,
 		FILE_SHARE_READ|FILE_SHARE_WRITE,
 		NULL, OPEN_EXISTING, 0 , NULL);
 
-	DeviceIoControl(hDevice,
+	result = DeviceIoControl (
+		hDevice,
 		BENCHMARK_DRV_IOCTL,
-		argv,
-		sizeof(char*)*argc,
-		bufferOut,
-		sizeof(bufferOut),
+		(LPVOID) argv,
+		bufferSize,
+		(LPVOID) bufferOut,
+		bufferSize,
 		&bytesReturned, NULL);
 
-	VirtualUnlock(hApp, PEHeader->OptionalHeader.SizeOfImage);
+	result = VirtualUnlock(hApp, PEHeader->OptionalHeader.SizeOfImage);
+
 	FreeLibrary(hApp);
+	
 	for (int i = 2; i < argc; i++) {
-		std::cout << argv[i] << ":   " << ((unsigned long long*)bufferOut)[i] << "\n";
+		std::cout << argv[i] << ":   " << bufferOut[i] << "\n";
 	}
+
+	free(bufferOut);
 
 	return 0;
 }
