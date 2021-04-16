@@ -15,8 +15,8 @@ NTSTATUS CreateCloseDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 #pragma alloc_text (PAGE, NotImplementedDispatch)
 #pragma alloc_text (PAGE, IoCtlDispatch)
 #pragma alloc_text (PAGE, UnloadHandler)
-#pragma alloc_text (PAGE, MeasureApp)
-#pragma alloc_text (PAGELK, CreateCloseDispatch)
+#pragma alloc_text (PAGE, CreateCloseDispatch)
+#pragma alloc_text (PAGELK, MeasureApp)
 #endif
 
 #define BENCHMARK_DRV_IOCTL CTL_CODE(FILE_DEVICE_UNKNOWN, 0x902, METHOD_NEITHER, FILE_ANY_ACCESS)
