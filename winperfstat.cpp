@@ -1,3 +1,6 @@
+// ConsoleApplication2.cpp : This file contains the 'main' function. Program execution begins and ends there.
+//
+
 #include <iostream>
 #include <Windows.h>
 #include <setupapi.h>
@@ -76,7 +79,7 @@ int InstallAndStartDriver() {
 	return 0;
 }
 
-int main(int argc, CHAR** argv)
+int main(int argc, CHAR* volatile * argv)
 {
 	HANDLE hDevice;
 	PCWSTR SymLink = L"\\\\.\\winperfstat";
@@ -85,8 +88,10 @@ int main(int argc, CHAR** argv)
 	HMODULE hApp;
 	PIMAGE_NT_HEADERS64 PEHeader;
 	size_t bufferSize = sizeof(unsigned long long)*argc;
-	unsigned long long* bufferOut = (unsigned long long*) malloc (bufferSize);
+	unsigned long long* bufferOut = (unsigned long long*) calloc (argc, sizeof(unsigned long long));
 	int result;
+	result = VirtualLock(bufferOut, bufferSize);
+	result = VirtualLock((LPVOID)argv, bufferSize);
 
 	if (int i = InstallAndStartDriver()) {  //if driver not installed, install; if driver not started, start
 		std::cout << "error" << i;        //if error during install start / install check
@@ -114,7 +119,11 @@ int main(int argc, CHAR** argv)
 		bufferSize,
 		&bytesReturned, NULL);
 
+	CloseHandle(hDevice);
+	
 	result = VirtualUnlock(hApp, PEHeader->OptionalHeader.SizeOfImage);
+	result = VirtualUnlock(bufferOut, bufferSize);
+	result = VirtualUnlock((LPVOID)argv, bufferSize);
 
 	FreeLibrary(hApp);
 	
