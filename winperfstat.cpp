@@ -1,8 +1,11 @@
 #include <iostream>
 #include <Windows.h>
 #include <setupapi.h>
+#include <string>
 
 #define BENCHMARK_DRV_IOCTL CTL_CODE(FILE_DEVICE_UNKNOWN, 0x902, METHOD_NEITHER, FILE_ANY_ACCESS)
+
+LPCSTR AppName;
 
 int InstallAndStartDriver() {
 
@@ -18,7 +21,7 @@ int InstallAndStartDriver() {
 	DWORD StartType = 3;
 	PBOOL FileWasInUse = NULL;
 	LSTATUS status;
-	
+
 	if (status = RegCreateKeyExA(HKEY_LOCAL_MACHINE,
 		SubKey,
 		NULL, NULL,
@@ -26,7 +29,7 @@ int InstallAndStartDriver() {
 		KEY_WRITE,
 		NULL,
 		&hKey,
-		NULL)) 
+		NULL))
 	{
 		return 1;
 	}
@@ -42,7 +45,7 @@ int InstallAndStartDriver() {
 
 	if (SC_HANDLE manager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS)) {
 
-		HINF HInf = SetupOpenInfFile(InfFileName, NULL, INF_STYLE_WIN4|INF_STYLE_OLDNT, &ErrorLine);
+		HINF HInf = SetupOpenInfFile(InfFileName, NULL, INF_STYLE_WIN4 | INF_STYLE_OLDNT, &ErrorLine);
 		if (SetupInstallFileW(HInf, NULL, SourceFile, SourcePathRoot, DriverInstallPath,
 			SP_COPY_NEWER_OR_SAME, NULL, FileWasInUse)) {
 
@@ -56,7 +59,7 @@ int InstallAndStartDriver() {
 				SERVICE_ERROR_NORMAL,
 				DriverInstallPath,
 				NULL, NULL, NULL, NULL, NULL);
-				
+
 			if (GetLastError() == ERROR_SERVICE_EXISTS) { //1073
 				service = OpenService(manager, DriverName, SERVICE_ALL_ACCESS);
 			}
@@ -76,54 +79,80 @@ int InstallAndStartDriver() {
 	return 0;
 }
 
+PVOID ExceptionAddress;
+
 int main(int argc, CHAR* volatile * argv)
 {
 	HANDLE hDevice;
 	PCWSTR SymLink = L"\\\\.\\winperfstat";
 	DWORD bytesReturned;
-	LPCSTR AppName = argv[1];
 	HMODULE hApp;
 	PIMAGE_NT_HEADERS64 PEHeader;
-	size_t bufferSize = sizeof(unsigned long long)*argc;
-	unsigned long long* bufferOut = (unsigned long long*) calloc (argc, sizeof(unsigned long long));
-	int result;
-	result = VirtualLock(bufferOut, bufferSize);
-	result = VirtualLock((LPVOID)argv, bufferSize);
+
+	if (argc < 3) {
+		if (argc < 2) {
+			std::cout << "invalid usage, use /? for help";
+		}
+		else if (!strcmp("/?", argv[1])) {
+			std::cout << "winperfstat version 1.0.0\n";
+			std::cout << "usage: winperfstat [executable] [counter list]";
+		} 
+		else {
+			std::cout << "no counters supplied to benchmark";
+		}
+
+		return false;
+	}
 
 	if (int i = InstallAndStartDriver()) {  //if driver not installed, install; if driver not started, start
 		std::cout << "error" << i;        //if error during install start / install check
-		return false;     
-	}; 
+		return false;
+	};
 
-	hApp = LoadLibraryA(AppName); 
+	AppName = argv[1];
+	hApp = LoadLibraryA(AppName);
+
+	if (!hApp) {
+		std::cout << "invalid application";
+		return false;
+	}
+
 	PEHeader = ((PIMAGE_NT_HEADERS64)((PBYTE)hApp + (int)(*((PBYTE)hApp + 0x3c))));
+	argv[0] = (char*)hApp + (int)PEHeader->OptionalHeader.AddressOfEntryPoint;
+	
+	__try {
+		((void(*)())(argv[0]))(); //calls the benchmark function, making sure it returns and without error
+	}
+	__except ((ExceptionAddress = ((LPEXCEPTION_POINTERS)(GetExceptionInformation()))->ExceptionRecord->ExceptionAddress) ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_EXECUTE_HANDLER) {
+
+
+		std::cout << AppName << " crashed with exception: " << std::hex << GetExceptionCode() << " at code section offset: " << (unsigned long long) ExceptionAddress - (unsigned long long) hApp - PEHeader->OptionalHeader.BaseOfCode;
+
+		return false;
+	}
+
+	int result;
 	result = VirtualLock(hApp, PEHeader->OptionalHeader.SizeOfImage);
-	argv[0] = (char*)hApp + (int)PEHeader->OptionalHeader.BaseOfCode;
-	((void(*)())(argv[0]))(); //calls the benchmark function, making sure it returns and without error
-	                          //don't need SEH handler because there's one in RtlUserThreadStart
+
+	size_t bufferSize = sizeof(unsigned long long)*argc;
+	unsigned long long* bufferOut = (unsigned long long*) calloc(argc, sizeof(unsigned long long));
+	result = VirtualLock(bufferOut, bufferSize);
+	result = VirtualLock((LPVOID)argv, bufferSize);
 
 	hDevice = CreateFileW(SymLink,
-		FILE_READ_ACCESS|FILE_WRITE_ACCESS,
-		FILE_SHARE_READ|FILE_SHARE_WRITE,
-		NULL, OPEN_EXISTING, 0 , NULL);
+		FILE_READ_ACCESS | FILE_WRITE_ACCESS,
+		FILE_SHARE_READ | FILE_SHARE_WRITE,
+		NULL, OPEN_EXISTING, 0, NULL);
 
-	result = DeviceIoControl (
+	result = DeviceIoControl(
 		hDevice,
 		BENCHMARK_DRV_IOCTL,
-		(LPVOID) argv,
+		(LPVOID)argv,
 		bufferSize,
-		(LPVOID) bufferOut,
+		(LPVOID)bufferOut,
 		bufferSize,
 		&bytesReturned, NULL);
 
-	CloseHandle(hDevice);
-	
-	result = VirtualUnlock(hApp, PEHeader->OptionalHeader.SizeOfImage);
-	result = VirtualUnlock(bufferOut, bufferSize);
-	result = VirtualUnlock((LPVOID)argv, bufferSize);
-
-	FreeLibrary(hApp);
-	
 	std::cout << "\nPerformance Counter stats for " << AppName << ":\n\n";
 
 	for (int i = 2; i < argc; i++) {
@@ -131,9 +160,18 @@ int main(int argc, CHAR* volatile * argv)
 	}
 
 	std::cout << "\n=< Note: the counters are benchmarked in batches of 4\n";
+	std::cout << "=<Use 1 counter for the least noise";
+
+	CloseHandle(hDevice);
+
+	result = VirtualUnlock(hApp, PEHeader->OptionalHeader.SizeOfImage);
+	result = VirtualUnlock(bufferOut, bufferSize);
+	result = VirtualUnlock((LPVOID)argv, bufferSize);
+
+	FreeLibrary(hApp);
 
 	free(bufferOut);
 
-	return 0;
+	return false;
 }
 
