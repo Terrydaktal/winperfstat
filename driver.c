@@ -7,6 +7,7 @@ NTSTATUS IoCtlDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 VOID UnloadHandler(IN PDRIVER_OBJECT DriverObject);
 VOID MeasureApp(IN unsigned long long * outputBuffer);
 NTSTATUS CreateCloseDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
+extern _lownoiserdpmc(void EntryPoint(), unsigned long long numParams, unsigned long long* outputBuffer, unsigned long long* countBuffer);
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (INIT, DriverEntry)
@@ -21,7 +22,7 @@ NTSTATUS CreateCloseDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 #define IA32_PERF_EVTSEL(x) 0x186+x
 #define BuildEvent(EVT, UMASK, USR, OS, E, PC, INTT, ANY, EN, INV, CMASK) (EVT + (UMASK << 8) + (USR << 16) + (OS << 17) + (E << 18) + (PC << 19) + (INTT << 20) + (ANY << 21) + (EN << 22) + (INV << 23) + (CMASK << 24))
 
-unsigned long long int EventMSRValues[93] = {
+unsigned long long int EventMSRValues[95] = {
 	BuildEvent(0x3, 0x2, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0x3, 0x8, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0x7, 0x1, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
@@ -111,7 +112,7 @@ unsigned long long int EventMSRValues[93] = {
 	BuildEvent(0xA6, 0x01, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	
 	BuildEvent(0x0E, 0x02, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
-	BuildEvent(0xC2, 0x07, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
+	BuildEvent(0xC2, 0x08, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0xA2, 0x02, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0xAA, 0x02, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0xB1, 0x01, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
@@ -124,10 +125,12 @@ unsigned long long int EventMSRValues[93] = {
 	BuildEvent(0xA2, 0x10, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0xD3, 0x01, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
 	BuildEvent(0xA2, 0x01, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0),
+	BuildEvent(0xB1, 0x02, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x1, 0x1),
+	BuildEvent(0xB1, 0x02, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x1)
 
 };
 
-char* Events[93] = {
+char* Events[95] = {
 	"LD_BLOCKS.STORE_FORWARD", //strings automatically get nul character
 	"LD_BLOCKS.NO_SR",
 	"LD_BLOCKS_PARTIAL.ADDRESS_ALIAS",
@@ -161,8 +164,8 @@ char* Events[93] = {
 	"L2_RQSTS.ALL_CODE_RD",
 	"L2_RQSTS.ALL_DEMAND_REFERENCES",
 
-	"UOPS_RETIRED.RETIRE_SLOTS",
-	"UOPS_RETIRED.ALL", //same as UOPS_RETIRED.ANY, microfused count as 2
+	"UOPS_RETIRED.RETIRE_SLOTS", //microfused pair counts as 1
+	"UOPS_RETIRED.ALL", //same as UOPS_RETIRED.ANY, microfused pair counts as 2
 	"UOPS_RETIRED.ACTIVE_CYCLES",
 	"UOPS_RETIRED.STALL_CYCLES",
 	"UOPS_ISSUED.FLAGS_MERGE",
@@ -217,7 +220,7 @@ char* Events[93] = {
 	"MACRO_INSTS.FUSIONS_DECODED", //dont know what it's doing
 
 	"UOPS_ISSUED.FUSED",
-	"UOPS_RETIRED.FUSED", //MICRO
+	"UOPS_RETIRED.FUSED", //doesnt work
 	"RESOURCE_STALLS.SCOREBOARD",
 	"MACRO_INSTS.CISC_DECODED",
 	"UOPS_EXECUTED.THREAD",    //BACLEARS, BOGUS_BR AND BTB_MISSES DON'T WORK
@@ -229,7 +232,9 @@ char* Events[93] = {
 
 	"RESOURCE_STALLS.ROB_FULL",   //always 0 so far //same event no as  RESOURCE_STALLS.ROB
 	"MEM_LOAD_UOPS_L3_MISS_RETIRED.LOCAL_DRAM",  //always 0 so far
-    "RESOURCE_STALLS.ANY"
+    "RESOURCE_STALLS.ANY",
+	"UOPS_EXECUTED.CORE_CYCLES_NONE",
+	"UOPS_EXECUTED.CORE_CYCLES_GE_1" //  ALL CORES
 };
 
 NTSTATUS DriverEntry(
@@ -488,9 +493,7 @@ void MeasureApp(
 	switch ((numParams-2) % 4) {
 		case 1:
 			__writemsr(IA32_PERF_EVTSEL(0), MSRBuffer[numParams-1]);
-			countBuffer[numParams - 1] = __readpmc(0);
-			EntryPoint();
-			outputBuffer[numParams - 1] = __readpmc(0);
+			_lownoiserdpmc(EntryPoint, (unsigned long long) numParams, outputBuffer, countBuffer);
 			break;
 
 		case 2:
